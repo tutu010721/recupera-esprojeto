@@ -1,49 +1,75 @@
 // Importações
 const express = require('express');
-const { Pool } = require('pg'); // Importa o cliente de conexão do PostgreSQL
+const { Pool } = require('pg');
+const cors = require('cors'); // <-- NOVA LINHA
 
-// --- Configuração da Conexão com o Banco de Dados ---
-// O Pool vai usar automaticamente a variável de ambiente DATABASE_URL que configuramos no Render
+// Cria uma instância do aplicativo Express
+const app = express();
+
+// --- Middlewares ---
+// Adiciona a capacidade da API de entender JSON
+app.use(express.json());
+// Adiciona a capacidade da API de aceitar requisições de outros domínios (CORS)
+app.use(cors()); // <-- NOVA LINHA
+
+// Define a porta do servidor
+const PORT = process.env.PORT || 3000;
+
+// Configuração da Conexão com o Banco de Dados
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Adiciona configuração de SSL necessária para conexões remotas como a do Render
   ssl: {
     rejectUnauthorized: false
   }
 });
 
-// Cria uma instância do aplicativo Express
-const app = express();
-const PORT = process.env.PORT || 3000;
-
 // --- Rotas da API ---
 
-// Rota principal
+// Rota principal de teste
 app.get('/', (req, res) => {
   res.send('API do SaaS de Recuperação está funcionando!');
 });
 
-// Nova rota para testar a conexão com o banco de dados
+// Rota para testar a conexão com o banco de dados
 app.get('/db-test', async (req, res) => {
   try {
-    const client = await pool.connect(); // Tenta pegar uma conexão do pool
-    const result = await client.query('SELECT NOW()'); // Faz uma query simples para pegar a hora atual do DB
-    res.json({ success: true, time: result.rows[0].now }); // Retorna a hora como JSON
-    client.release(); // Libera a conexão de volta para o pool
+    const client = await pool.connect();
+    const result = await client.query('SELECT NOW()');
+    res.json({ success: true, time: result.rows[0].now });
+    client.release();
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: 'Erro ao conectar ao banco de dados.' });
   }
 });
 
-// Rota para webhooks (ainda sem lógica de DB)
-app.post('/webhook/:checkout', (req, res) => {
-  const checkoutName = req.params.checkout;
-  console.log(`Webhook recebido do checkout: ${checkoutName}`);
-  res.status(200).send('Webhook recebido com sucesso.');
+// Rota para Cadastrar um novo usuário
+app.post('/users', async (req, res) => {
+  const { name, email, password, role } = req.body;
+
+  if (!name || !email || !password || !role) {
+    return res.status(400).json({ error: 'Todos os campos são obrigatórios: name, email, password, role.' });
+  }
+
+  // ATENÇÃO: Por enquanto, vamos salvar a senha como texto puro.
+  // Este é um PASSO TEMPORÁRIO e INSEGURO. No futuro, vamos substituir por criptografia (hashing).
+  const password_hash = password;
+
+  try {
+    const queryText = 'INSERT INTO users(name, email, password_hash, role) VALUES($1, $2, $3, $4) RETURNING id, name, email, role, created_at';
+    const queryValues = [name, email, password_hash, role];
+
+    const result = await pool.query(queryText, queryValues);
+
+    res.status(201).json(result.rows[0]);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao criar usuário. O email já pode estar em uso.' });
+  }
 });
 
-// Inicia o servidor
+// Inicia o servidor para escutar por requisições na porta definida
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
