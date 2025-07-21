@@ -3,7 +3,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken'); // <-- 1. IMPORTAMOS O JWT
+const jwt = require('jsonwebtoken');
 
 // Cria uma instância do aplicativo Express
 const app = express();
@@ -13,7 +13,6 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // UMA CHAVE SECRETA PARA ASSINAR NOSSOS TOKENS.
-// No futuro, isso deve vir de uma variável de ambiente!
 const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123';
 
 // Configuração da Conexão com o Banco de Dados
@@ -30,9 +29,7 @@ app.get('/', (req, res) => {
   res.send('API do SaaS de Recuperação está funcionando!');
 });
 
-// ... (a rota /db-test continua aqui, se você quiser mantê-la)
-
-// Rota para Cadastrar um novo usuário
+// Rota para Cadastrar um novo usuário (COM A CORREÇÃO)
 app.post('/users', async (req, res) => {
   const { name, email, password, role } = req.body;
 
@@ -45,7 +42,9 @@ app.post('/users', async (req, res) => {
     const password_hash = await bcrypt.hash(password, saltRounds);
 
     const queryText = 'INSERT INTO users(name, email, password_hash, role) VALUES($1, $2, $3, $4) RETURNING id, name, email, role, created_at';
-    const queryValues = [name, email, password_hash];
+    
+    // LINHA CORRIGIDA ABAIXO:
+    const queryValues = [name, email, password_hash, role]; // <-- AGORA INCLUI O 'role'
 
     const result = await pool.query(queryText, queryValues);
 
@@ -57,7 +56,7 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// --- 2. NOVA ROTA DE LOGIN ---
+// Rota de Login
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -66,31 +65,25 @@ app.post('/login', async (req, res) => {
   }
 
   try {
-    // Acha o usuário no banco pelo email
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
 
-    // Se não achar o usuário, retorna erro
     if (!user) {
-      return res.status(401).json({ error: 'Credenciais inválidas.' }); // Mensagem genérica por segurança
+      return res.status(401).json({ error: 'Credenciais inválidas.' });
     }
 
-    // Compara a senha enviada com o hash salvo no banco
     const isPasswordCorrect = await bcrypt.compare(password, user.password_hash);
 
-    // Se a senha estiver incorreta, retorna erro
     if (!isPasswordCorrect) {
       return res.status(401).json({ error: 'Credenciais inválidas.' });
     }
 
-    // Se tudo estiver certo, gera o token JWT
     const token = jwt.sign(
-      { userId: user.id, role: user.role }, // O que vai dentro do token (o "crachá")
-      JWT_SECRET,                             // A chave secreta para assinar
-      { expiresIn: '24h' }                      // Duração do token
+      { userId: user.id, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
     );
 
-    // Envia o token de volta para o cliente
     res.json({
       message: 'Login bem-sucedido!',
       token: token
