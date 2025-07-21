@@ -1,21 +1,27 @@
-// Importações
+// =================================================================
+//                      IMPORTAÇÕES DE PACOTES
+// =================================================================
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// Cria uma instância do aplicativo Express
+
+// =================================================================
+//                      CONFIGURAÇÃO INICIAL DO APP
+// =================================================================
 const app = express();
-app.use(express.json());
-app.use(cors());
+app.use(express.json()); // Middleware para entender JSON
+app.use(cors());         // Middleware para permitir requisições de outros domínios
 
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123'; // No futuro, idealmente virá de uma variável de ambiente.
 
-// UMA CHAVE SECRETA PARA ASSINAR NOSSOS TOKENS.
-const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123';
 
-// Configuração da Conexão com o Banco de Dados
+// =================================================================
+//                      CONFIGURAÇÃO DO BANCO DE DADOS
+// =================================================================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -23,80 +29,110 @@ const pool = new Pool({
   }
 });
 
-// --- Rotas da API ---
 
+// =================================================================
+//                      MIDDLEWARE DE AUTENTICAÇÃO
+// =================================================================
+// Este middleware será nosso "segurança" para rotas protegidas
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Formato: "Bearer TOKEN"
+
+  if (token == null) {
+    return res.sendStatus(401); // 401 Não autorizado
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.sendStatus(403); // 403 Proibido (token inválido/expirado)
+    }
+    req.user = user; // Salva os dados do usuário (ex: id, role) na requisição
+    next(); // Continua para a rota
+  });
+};
+
+
+// =================================================================
+//                           ROTAS PÚBLICAS
+// =================================================================
+
+// Rota raiz para teste
 app.get('/', (req, res) => {
   res.send('API do SaaS de Recuperação está funcionando!');
 });
 
-// Rota para Cadastrar um novo usuário (COM A CORREÇÃO)
+// Rota para criar novos usuários
 app.post('/users', async (req, res) => {
   const { name, email, password, role } = req.body;
-
   if (!name || !email || !password || !role) {
     return res.status(400).json({ error: 'Todos os campos são obrigatórios.' });
   }
-
   try {
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
-
     const queryText = 'INSERT INTO users(name, email, password_hash, role) VALUES($1, $2, $3, $4) RETURNING id, name, email, role, created_at';
-    
-    // LINHA CORRIGIDA ABAIXO:
-    const queryValues = [name, email, password_hash, role]; // <-- AGORA INCLUI O 'role'
-
+    const queryValues = [name, email, password_hash, role];
     const result = await pool.query(queryText, queryValues);
-
     res.status(201).json(result.rows[0]);
-
   } catch (err) {
-    console.error(err);
+    console.error("Erro em POST /users:", err);
     res.status(500).json({ error: 'Erro ao criar usuário. O email já pode estar em uso.' });
   }
 });
 
-// Rota de Login
+// Rota para autenticar usuários e gerar um token
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
-
   if (!email || !password) {
     return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
   }
-
   try {
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
-
     if (!user) {
       return res.status(401).json({ error: 'Credenciais inválidas.' });
     }
-
     const isPasswordCorrect = await bcrypt.compare(password, user.password_hash);
-
     if (!isPasswordCorrect) {
       return res.status(401).json({ error: 'Credenciais inválidas.' });
     }
-
     const token = jwt.sign(
       { userId: user.id, role: user.role },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
-
-    res.json({
-      message: 'Login bem-sucedido!',
-      token: token
-    });
-
+    res.json({ message: 'Login bem-sucedido!', token: token });
   } catch (err) {
-    console.error(err);
+    console.error("Erro em POST /login:", err);
     res.status(500).json({ error: 'Erro interno do servidor.' });
   }
 });
 
 
-// Inicia o servidor
+// =================================================================
+//                           ROTAS PROTEGIDAS
+// =================================================================
+
+// Rota para buscar os dados do próprio usuário logado
+app.get('/api/me', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query('SELECT id, name, email, role FROM users WHERE id = $1', [userId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Erro em GET /api/me:", err);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
+  }
+});
+
+
+// =================================================================
+//                         INICIALIZAÇÃO DO SERVIDOR
+// =================================================================
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
