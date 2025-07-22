@@ -31,8 +31,9 @@ const pool = new Pool({
 
 
 // =================================================================
-//                      MIDDLEWARE DE AUTENTICAÇÃO
+//                      MIDDLEWARES DE AUTENTICAÇÃO
 // =================================================================
+// 1. Verifica se o usuário está logado (tem um token válido)
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -44,6 +45,16 @@ const authMiddleware = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// 2. Verifica se o usuário logado é um ADMIN
+const adminOnlyMiddleware = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') {
+    next(); // Se for admin, pode passar
+  } else {
+    // Se não for admin, retorna acesso proibido
+    res.status(403).json({ error: 'Acesso negado. Rota exclusiva for administradores.' });
+  }
 };
 
 
@@ -104,14 +115,10 @@ app.post('/webhook/receive/:storeId', async (req, res) => {
   try {
     const { storeId } = req.params;
     const rawData = req.body;
-
     const queryText = 'INSERT INTO sales_leads (store_id, raw_data) VALUES ($1, $2)';
     const queryValues = [storeId, rawData];
-    
     await pool.query(queryText, queryValues);
-
     res.status(200).send({ message: 'Webhook recebido com sucesso.' });
-
   } catch (err) {
     console.error("Erro no Webhook:", err);
     res.status(500).send({ error: 'Erro ao processar webhook.' });
@@ -120,7 +127,7 @@ app.post('/webhook/receive/:storeId', async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS PROTEGIDAS
+//                           ROTAS PROTEGIDAS (GERAIS)
 // =================================================================
 
 app.get('/api/me', authMiddleware, async (req, res) => {
@@ -158,12 +165,10 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
   try {
     const ownerId = req.user.userId;
     const result = await pool.query('SELECT * FROM stores WHERE owner_id = $1', [ownerId]);
-    
     const storesWithWebhook = result.rows.map(store => ({
       ...store,
       webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/receive/${store.id}`
     }));
-
     res.json(storesWithWebhook);
   } catch (err) {
     console.error("Erro em GET /api/stores:", err);
@@ -185,26 +190,37 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   try {
     const { leadId } = req.params;
     const { status } = req.body;
-
     const validStatuses = ['new', 'contacted', 'recovered', 'lost'];
     if (!status || !validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Status inválido ou não fornecido.' });
     }
-
     const queryText = 'UPDATE sales_leads SET status = $1 WHERE id = $2 RETURNING *';
     const queryValues = [status, leadId];
-
     const result = await pool.query(queryText, queryValues);
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Lead não encontrado.' });
     }
-
     res.json(result.rows[0]);
-
   } catch (err) {
     console.error("Erro em PATCH /api/leads/:leadId/status:", err);
     res.status(500).json({ error: 'Erro ao atualizar o status do lead.' });
+  }
+});
+
+
+// =================================================================
+//                           ROTAS DE ADMIN
+// =================================================================
+
+// Rota para o admin listar todos os usuários
+app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
+  try {
+    // Busca todos os usuários, mas sem o hash da senha por segurança
+    const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/admin/users:", err);
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
   }
 });
 
