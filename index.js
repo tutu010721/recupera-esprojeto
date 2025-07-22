@@ -16,7 +16,7 @@ app.use(express.json()); // Middleware para entender JSON
 app.use(cors());         // Middleware para permitir requisições de outros domínios
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123'; // No futuro, idealmente virá de uma variável de ambiente.
+const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123';
 
 
 // =================================================================
@@ -33,21 +33,16 @@ const pool = new Pool({
 // =================================================================
 //                      MIDDLEWARE DE AUTENTICAÇÃO
 // =================================================================
-// Este middleware será nosso "segurança" para rotas protegidas
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Formato: "Bearer TOKEN"
+  const token = authHeader && authHeader.split(' ')[1];
 
-  if (token == null) {
-    return res.sendStatus(401); // 401 Não autorizado
-  }
+  if (token == null) return res.sendStatus(401);
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.sendStatus(403); // 403 Proibido (token inválido/expirado)
-    }
-    req.user = user; // Salva os dados do usuário (ex: id, role) na requisição
-    next(); // Continua para a rota
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
   });
 };
 
@@ -56,12 +51,10 @@ const authMiddleware = (req, res, next) => {
 //                           ROTAS PÚBLICAS
 // =================================================================
 
-// Rota raiz para teste
 app.get('/', (req, res) => {
   res.send('API do SaaS de Recuperação está funcionando!');
 });
 
-// Rota para criar novos usuários
 app.post('/users', async (req, res) => {
   const { name, email, password, role } = req.body;
   if (!name || !email || !password || !role) {
@@ -80,7 +73,6 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// Rota para autenticar usuários e gerar um token
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -108,12 +100,30 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Rota para receber os webhooks das plataformas de pagamento
+app.post('/webhook/receive/:storeId', async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    const rawData = req.body;
+
+    const queryText = 'INSERT INTO sales_leads (store_id, raw_data) VALUES ($1, $2)';
+    const queryValues = [storeId, rawData];
+    
+    await pool.query(queryText, queryValues);
+
+    res.status(200).send({ message: 'Webhook recebido com sucesso.' });
+
+  } catch (err) {
+    console.error("Erro no Webhook:", err);
+    res.status(500).send({ error: 'Erro ao processar webhook.' });
+  }
+});
+
 
 // =================================================================
 //                           ROTAS PROTEGIDAS
 // =================================================================
 
-// Rota para buscar os dados do próprio usuário logado
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -128,7 +138,6 @@ app.get('/api/me', authMiddleware, async (req, res) => {
   }
 });
 
-// Rota para um usuário logado criar uma nova loja
 app.post('/api/stores', authMiddleware, async (req, res) => {
   const ownerId = req.user.userId;
   const { name } = req.body;
@@ -146,13 +155,11 @@ app.post('/api/stores', authMiddleware, async (req, res) => {
   }
 });
 
-// Rota para um usuário logado LISTAR suas próprias lojas
 app.get('/api/stores', authMiddleware, async (req, res) => {
   try {
     const ownerId = req.user.userId;
     const result = await pool.query('SELECT * FROM stores WHERE owner_id = $1', [ownerId]);
     
-    // Para cada loja encontrada, adicionamos dinamicamente a URL do webhook
     const storesWithWebhook = result.rows.map(store => ({
       ...store,
       webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/receive/${store.id}`
