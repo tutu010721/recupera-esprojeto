@@ -225,7 +225,6 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   }
 });
 
-// Rota de leads - AGORA COM CONTROLE DE ACESSO E FILTRO DE LOJA
 app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
     const agentId = req.user.userId;
@@ -240,7 +239,7 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
     `;
     const queryValues = [agentId];
 
-    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status as string)) {
+    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
       queryValues.push(status);
       queryText += ` AND sl.status = $${queryValues.length}`;
     }
@@ -260,7 +259,6 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
   }
 });
 
-// NOVA ROTA para o atendente ver apenas as lojas dele
 app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   try {
     const agentId = req.user.userId;
