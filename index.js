@@ -225,21 +225,29 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   }
 });
 
+// Rota de leads - AGORA COM CONTROLE DE ACESSO E FILTRO DE LOJA
 app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
-    const { status } = req.query;
+    const agentId = req.user.userId;
+    const { status, storeId } = req.query;
 
     let queryText = `
       SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
       FROM sales_leads sl
       JOIN stores s ON sl.store_id = s.id
+      JOIN agent_store_assignments asa ON sl.store_id = asa.store_id
+      WHERE asa.agent_id = $1
     `;
-    const queryValues = [];
+    const queryValues = [agentId];
 
-    // LINHA CORRIGIDA
-    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
-      queryText += ` WHERE sl.status = $1`;
+    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status as string)) {
       queryValues.push(status);
+      queryText += ` AND sl.status = $${queryValues.length}`;
+    }
+
+    if (storeId && storeId !== 'all') {
+      queryValues.push(storeId);
+      queryText += ` AND sl.store_id = $${queryValues.length}`;
     }
     
     queryText += ` ORDER BY sl.received_at DESC`;
@@ -249,6 +257,25 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Erro em GET /api/leads:", err);
     res.status(500).json({ error: 'Erro ao buscar os leads.' });
+  }
+});
+
+// NOVA ROTA para o atendente ver apenas as lojas dele
+app.get('/api/agent/stores', authMiddleware, async (req, res) => {
+  try {
+    const agentId = req.user.userId;
+    const queryText = `
+      SELECT s.id, s.name 
+      FROM stores s
+      JOIN agent_store_assignments asa ON s.id = asa.store_id
+      WHERE asa.agent_id = $1
+      ORDER BY s.name;
+    `;
+    const result = await pool.query(queryText, [agentId]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/agent/stores:", err);
+    res.status(500).json({ error: 'Erro ao buscar lojas do atendente.' });
   }
 });
 
