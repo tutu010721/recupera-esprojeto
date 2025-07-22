@@ -33,8 +33,6 @@ const pool = new Pool({
 // =================================================================
 //          WEBHOOK PARSERS ("TRADUTORES")
 // =================================================================
-
-// Define um formato padrão para os dados de um lead dentro do nosso sistema
 const parseGenericWebhook = (rawData) => {
   return {
     customer_name: rawData.customer?.name,
@@ -44,29 +42,26 @@ const parseGenericWebhook = (rawData) => {
     total_value: rawData.transaction?.value,
     currency: rawData.transaction?.currency,
     payment_method: rawData.transaction?.payment_method,
-    status: rawData.event_type // Ex: 'ORDER_PAID', 'ABANDONED_CART'
+    status: rawData.event_type
   };
 };
 
 const parseHotmartWebhook = (rawData) => {
-  // Exemplo hipotético de como os dados da Hotmart poderiam ser
   return {
-    customer_name: rawData.buyer?.name,
-    customer_email: rawData.buyer?.email,
-    customer_phone: rawData.buyer?.phone_local_code ? `${rawData.buyer.phone_area_code}${rawData.buyer.phone_number}` : null,
-    product_name: rawData.product?.name,
-    total_value: rawData.purchase?.price?.value,
-    currency: rawData.purchase?.price?.currency_code,
-    payment_method: rawData.purchase?.payment?.type,
-    status: rawData.event // Ex: 'PURCHASE_APPROVED'
+    customer_name: rawData.data?.buyer?.name,
+    customer_email: rawData.data?.buyer?.email,
+    customer_phone: rawData.data?.buyer?.phone_area_code ? `${rawData.data.buyer.phone_area_code}${rawData.data.buyer.phone_number}` : null,
+    product_name: rawData.data?.product?.name,
+    total_value: rawData.data?.purchase?.price?.value,
+    currency: rawData.data?.purchase?.price?.currency_code,
+    payment_method: rawData.data?.purchase?.payment?.type,
+    status: rawData.event
   };
 };
 
-// Mapeia o nome da plataforma para a função de parser correspondente
 const webhookParsers = {
   'generic': parseGenericWebhook,
   'hotmart': parseHotmartWebhook,
-  // No futuro, adicionaremos outros aqui, como 'kiwify': parseKiwifyWebhook
 };
 
 
@@ -96,7 +91,6 @@ const adminOnlyMiddleware = (req, res, next) => {
 // =================================================================
 //                           ROTAS PÚBLICAS
 // =================================================================
-
 app.get('/', (req, res) => {
   res.send('API do SaaS de Recuperação está funcionando!');
 });
@@ -142,26 +136,19 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Rota de Webhook Inteligente
 app.post('/webhook/:platform/:storeId', async (req, res) => {
   try {
     const { platform, storeId } = req.params;
     const rawData = req.body;
-
     const parser = webhookParsers[platform];
-
     if (!parser) {
       console.error(`Nenhum parser encontrado para a plataforma: ${platform}`);
       return res.status(400).send({ error: 'Plataforma de webhook não suportada.' });
     }
-    
     const parsedData = parser(rawData);
-
     const queryText = 'INSERT INTO sales_leads (store_id, raw_data, parsed_data) VALUES ($1, $2, $3)';
     const queryValues = [storeId, rawData, parsedData];
-    
     await pool.query(queryText, queryValues);
-
     res.status(200).send({ message: 'Webhook recebido com sucesso.' });
   } catch (err) {
     console.error("Erro no Webhook:", err);
@@ -173,7 +160,6 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
 // =================================================================
 //                           ROTAS PROTEGIDAS
 // =================================================================
-
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -224,7 +210,18 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
 
 app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM sales_leads ORDER BY received_at DESC');
+    const queryText = `
+      SELECT 
+        sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data,
+        s.name as store_name 
+      FROM 
+        sales_leads sl
+      JOIN 
+        stores s ON sl.store_id = s.id
+      ORDER BY 
+        sl.received_at DESC
+    `;
+    const result = await pool.query(queryText);
     res.json(result.rows);
   } catch (err) {
     console.error("Erro em GET /api/leads:", err);
@@ -253,7 +250,6 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
 // =================================================================
 //                           ROTAS DE ADMIN
 // =================================================================
-
 app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
