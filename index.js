@@ -177,11 +177,133 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS PROTEGIDAS e DE ADMIN
+//                           ROTAS PROTEGIDAS
 // =================================================================
-// (Todas as suas rotas /api/... e /api/admin/... continuam aqui)
-app.get('/api/me', authMiddleware, async (req, res) => { /* ...código completo daqui... */ });
-// ... e assim por diante para todas as outras ...
+app.get('/api/me', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query('SELECT id, name, email, role FROM users WHERE id = $1', [userId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Erro em GET /api/me:", err);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
+  }
+});
+
+app.post('/api/stores', authMiddleware, async (req, res) => {
+  const ownerId = req.user.userId;
+  const { name, platform } = req.body;
+  if (!name) return res.status(400).json({ error: 'O nome da loja é obrigatório.' });
+  const storePlatform = platform || 'generic';
+  try {
+    const queryText = 'INSERT INTO stores(name, owner_id, platform) VALUES($1, $2, $3) RETURNING *';
+    const queryValues = [name, ownerId, storePlatform];
+    const result = await pool.query(queryText, queryValues);
+    const newStore = result.rows[0];
+    const storeWithWebhook = {
+      ...newStore,
+      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/${newStore.platform}/${newStore.id}`
+    };
+    res.status(201).json(storeWithWebhook);
+  } catch (err) {
+    console.error("Erro em POST /api/stores:", err);
+    res.status(500).json({ error: 'Erro ao criar a loja.' });
+  }
+});
+
+app.get('/api/stores', authMiddleware, async (req, res) => {
+  try {
+    const ownerId = req.user.userId;
+    const result = await pool.query('SELECT * FROM stores WHERE owner_id = $1', [ownerId]);
+    const storesWithWebhook = result.rows.map(store => ({
+      ...store,
+      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/${store.platform}/${store.id}`
+    }));
+    res.json(storesWithWebhook);
+  } catch (err) {
+    console.error("Erro em GET /api/stores:", err);
+    res.status(500).json({ error: 'Erro ao buscar lojas.' });
+  }
+});
+
+app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { status } = req.body;
+    const validStatuses = ['new', 'contacted', 'recovered', 'lost'];
+    if (!status || !validStatuses.includes(status)) return res.status(400).json({ error: 'Status inválido ou não fornecido.' });
+    const queryText = 'UPDATE sales_leads SET status = $1 WHERE id = $2 RETURNING *';
+    const queryValues = [status, leadId];
+    const result = await pool.query(queryText, queryValues);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Erro em PATCH /api/leads/:leadId/status:", err);
+    res.status(500).json({ error: 'Erro ao atualizar o status do lead.' });
+  }
+});
+
+app.get('/api/leads', authMiddleware, async (req, res) => {
+  try {
+    const agentId = req.user.userId;
+    const { status, storeId } = req.query;
+    let queryText = `
+      SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
+      FROM sales_leads sl
+      JOIN stores s ON sl.store_id = s.id
+      JOIN agent_store_assignments asa ON sl.store_id = asa.store_id
+      WHERE asa.agent_id = $1
+    `;
+    const queryValues = [agentId];
+    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
+      queryValues.push(status);
+      queryText += ` AND sl.status = $${queryValues.length}`;
+    }
+    if (storeId && storeId !== 'all') {
+      queryValues.push(storeId);
+      queryText += ` AND sl.store_id = $${queryValues.length}`;
+    }
+    queryText += ` ORDER BY sl.received_at DESC`;
+    const result = await pool.query(queryText, queryValues);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/leads:", err);
+    res.status(500).json({ error: 'Erro ao buscar os leads.' });
+  }
+});
+
+app.get('/api/agent/stores', authMiddleware, async (req, res) => {
+  try {
+    const agentId = req.user.userId;
+    const queryText = `
+      SELECT s.id, s.name 
+      FROM stores s
+      JOIN agent_store_assignments asa ON s.id = asa.store_id
+      WHERE asa.agent_id = $1
+      ORDER BY s.name;
+    `;
+    const result = await pool.query(queryText, [agentId]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/agent/stores:", err);
+    res.status(500).json({ error: 'Erro ao buscar lojas do atendente.' });
+  }
+});
+
+
+// =================================================================
+//                           ROTAS DE ADMIN
+// =================================================================
+app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/admin/users:", err);
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
+  }
+});
 
 
 // =================================================================
