@@ -12,8 +12,8 @@ const jwt = require('jsonwebtoken');
 //                      CONFIGURAÇÃO INICIAL DO APP
 // =================================================================
 const app = express();
-app.use(express.json()); // Middleware para entender JSON
-app.use(cors());         // Middleware para permitir requisições de outros domínios
+app.use(express.json());
+app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = 'minha-chave-super-secreta-para-o-saas-123';
@@ -108,6 +108,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Esta rota será atualizada no futuro para lidar com as diferentes plataformas
 app.post('/webhook/receive/:storeId', async (req, res) => {
   try {
     const { storeId } = req.params;
@@ -143,19 +144,20 @@ app.get('/api/me', authMiddleware, async (req, res) => {
 
 app.post('/api/stores', authMiddleware, async (req, res) => {
   const ownerId = req.user.userId;
-  const { name } = req.body;
+  const { name, platform } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'O nome da loja é obrigatório.' });
   }
+  const storePlatform = platform || 'generic';
   try {
-    const queryText = 'INSERT INTO stores(name, owner_id) VALUES($1, $2) RETURNING *';
-    const queryValues = [name, ownerId];
+    const queryText = 'INSERT INTO stores(name, owner_id, platform) VALUES($1, $2, $3) RETURNING *';
+    const queryValues = [name, ownerId, storePlatform];
     const result = await pool.query(queryText, queryValues);
     
     const newStore = result.rows[0];
     const storeWithWebhook = {
       ...newStore,
-      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/receive/${newStore.id}`
+      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/${newStore.platform}/${newStore.id}`
     };
 
     res.status(201).json(storeWithWebhook);
@@ -172,7 +174,7 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
     
     const storesWithWebhook = result.rows.map(store => ({
       ...store,
-      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/receive/${store.id}`
+      webhookUrl: `https://recupera-esprojeto.onrender.com/webhook/${store.platform}/${store.id}`
     }));
 
     res.json(storesWithWebhook);
