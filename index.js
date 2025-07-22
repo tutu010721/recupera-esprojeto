@@ -208,27 +208,6 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/leads', authMiddleware, async (req, res) => {
-  try {
-    const queryText = `
-      SELECT 
-        sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data,
-        s.name as store_name 
-      FROM 
-        sales_leads sl
-      JOIN 
-        stores s ON sl.store_id = s.id
-      ORDER BY 
-        sl.received_at DESC
-    `;
-    const result = await pool.query(queryText);
-    res.json(result.rows);
-  } catch (err) {
-    console.error("Erro em GET /api/leads:", err);
-    res.status(500).json({ error: 'Erro ao buscar os leads.' });
-  }
-});
-
 app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   try {
     const { leadId } = req.params;
@@ -243,6 +222,34 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Erro em PATCH /api/leads/:leadId/status:", err);
     res.status(500).json({ error: 'Erro ao atualizar o status do lead.' });
+  }
+});
+
+// Rota para listar leads - ATUALIZADA PARA ACEITAR FILTRO DE STATUS
+app.get('/api/leads', authMiddleware, async (req, res) => {
+  try {
+    const { status } = req.query; // Pega o status da URL, ex: /api/leads?status=new
+
+    let queryText = `
+      SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
+      FROM sales_leads sl
+      JOIN stores s ON sl.store_id = s.id
+    `;
+    const queryValues = [];
+
+    // Se um status válido foi fornecido, adiciona o filtro WHERE na consulta
+    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status as string)) {
+      queryText += ` WHERE sl.status = $1`;
+      queryValues.push(status);
+    }
+    
+    queryText += ` ORDER BY sl.received_at DESC`;
+
+    const result = await pool.query(queryText, queryValues);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/leads:", err);
+    res.status(500).json({ error: 'Erro ao buscar os leads.' });
   }
 });
 
