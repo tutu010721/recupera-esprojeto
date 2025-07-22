@@ -100,7 +100,6 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Rota para receber os webhooks das plataformas de pagamento
 app.post('/webhook/receive/:storeId', async (req, res) => {
   try {
     const { storeId } = req.params;
@@ -172,16 +171,40 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
   }
 });
 
-// --- NOVA ROTA PARA O ATENDENTE LISTAR OS LEADS ---
 app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
-    // Por enquanto, vamos retornar todos os leads.
-    // No futuro, podemos adicionar filtros e lógica de atribuição.
     const result = await pool.query('SELECT * FROM sales_leads ORDER BY received_at DESC');
     res.json(result.rows);
   } catch (err) {
     console.error("Erro em GET /api/leads:", err);
     res.status(500).json({ error: 'Erro ao buscar os leads.' });
+  }
+});
+
+app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { status } = req.body;
+
+    const validStatuses = ['new', 'contacted', 'recovered', 'lost'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Status inválido ou não fornecido.' });
+    }
+
+    const queryText = 'UPDATE sales_leads SET status = $1 WHERE id = $2 RETURNING *';
+    const queryValues = [status, leadId];
+
+    const result = await pool.query(queryText, queryValues);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Lead não encontrado.' });
+    }
+
+    res.json(result.rows[0]);
+
+  } catch (err) {
+    console.error("Erro em PATCH /api/leads/:leadId/status:", err);
+    res.status(500).json({ error: 'Erro ao atualizar o status do lead.' });
   }
 });
 
