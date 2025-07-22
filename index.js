@@ -166,10 +166,22 @@ app.get('/api/stores', authMiddleware, async (req, res) => {
     }));
 
     res.json(storesWithWebhook);
-  } catch (err)
- {
+  } catch (err) {
     console.error("Erro em GET /api/stores:", err);
     res.status(500).json({ error: 'Erro ao buscar lojas.' });
+  }
+});
+
+// --- NOVA ROTA PARA O ATENDENTE LISTAR OS LEADS ---
+app.get('/api/leads', authMiddleware, async (req, res) => {
+  try {
+    // Por enquanto, vamos retornar todos os leads.
+    // No futuro, podemos adicionar filtros e lógica de atribuição.
+    const result = await pool.query('SELECT * FROM sales_leads ORDER BY received_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/leads:", err);
+    res.status(500).json({ error: 'Erro ao buscar os leads.' });
   }
 });
 
