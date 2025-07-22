@@ -225,10 +225,9 @@ app.patch('/api/leads/:leadId/status', authMiddleware, async (req, res) => {
   }
 });
 
-// Rota para listar leads - ATUALIZADA PARA ACEITAR FILTRO DE STATUS
 app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
-    const { status } = req.query; // Pega o status da URL, ex: /api/leads?status=new
+    const { status } = req.query;
 
     let queryText = `
       SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
@@ -237,8 +236,8 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
     `;
     const queryValues = [];
 
-    // Se um status válido foi fornecido, adiciona o filtro WHERE na consulta
-    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status as string)) {
+    // LINHA CORRIGIDA
+    if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
       queryText += ` WHERE sl.status = $1`;
       queryValues.push(status);
     }
