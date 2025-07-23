@@ -250,7 +250,6 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
     const agentId = req.user.userId;
     const { status, storeId } = req.query;
-
     let queryText = `
       SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
       FROM sales_leads sl
@@ -259,7 +258,6 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
       WHERE asa.agent_id = $1
     `;
     const queryValues = [agentId];
-
     if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
       queryValues.push(status);
       queryText += ` AND sl.status = $${queryValues.length}`;
@@ -269,7 +267,6 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
       queryText += ` AND sl.store_id = $${queryValues.length}`;
     }
     queryText += ` ORDER BY sl.received_at DESC`;
-
     const result = await pool.query(queryText, queryValues);
     res.json(result.rows);
   } catch (err) {
@@ -296,25 +293,20 @@ app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   }
 });
 
-// --- NOVA ROTA DE MÉTRICAS PARA O ATENDENTE ---
+// ROTA DE MÉTRICAS - AGORA COM A CONSULTA CORRIGIDA
 app.get('/api/agent/metrics', authMiddleware, async (req, res) => {
     try {
         const agentId = req.user.userId;
 
-        // Query SQL para calcular todas as métricas de uma só vez
         const queryText = `
             SELECT
-                -- Contagem de pedidos por status
-                COUNT(*) FILTER (WHERE sl.status = 'new') AS new_count,
-                COUNT(*) FILTER (WHERE sl.status = 'contacted') AS contacted_count,
-                COUNT(*) FILTER (WHERE sl.status = 'recovered') AS recovered_count,
-                -- Soma dos valores recuperados
-                COALESCE(SUM(CAST(sl.parsed_data->'total_value' AS NUMERIC)), 0) FILTER (WHERE sl.status = 'recovered') AS recovered_value,
-                -- Soma dos valores pendentes
-                COALESCE(SUM(CAST(sl.parsed_data->'total_value' AS NUMERIC)), 0) FILTER (WHERE sl.status IN ('new', 'contacted')) AS pending_value
+                COUNT(CASE WHEN sl.status = 'new' THEN 1 END) AS new_count,
+                COUNT(CASE WHEN sl.status = 'contacted' THEN 1 END) AS contacted_count,
+                COUNT(CASE WHEN sl.status = 'recovered' THEN 1 END) AS recovered_count,
+                COALESCE(SUM(CASE WHEN sl.status = 'recovered' THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS recovered_value,
+                COALESCE(SUM(CASE WHEN sl.status IN ('new', 'contacted') THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS pending_value
             FROM 
                 sales_leads sl
-            -- Garante que só estamos contando leads das lojas do atendente
             WHERE sl.store_id IN (SELECT store_id FROM agent_store_assignments WHERE agent_id = $1);
         `;
         
