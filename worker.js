@@ -1,44 +1,54 @@
-// worker.js - Nosso trabalhador de segundo plano
-
 const { Worker } = require('bullmq');
 const { Pool } = require('pg');
 const Redis = require('ioredis');
 
-// Configuração das conexões
-const redisConnection = new Redis(process.env.REDIS_URL);
+require('dotenv').config();
+
+if (!process.env.REDIS_URL || !process.env.DATABASE_URL) {
+  console.error('As variáveis de ambiente REDIS_URL e DATABASE_URL são obrigatórias.');
+  process.exit(1);
+}
+
+// CORREÇÃO APLICADA AQUI
+const redisConnection = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null
+});
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-console.log('Worker iniciado e esperando por tarefas...');
+console.log('Worker iniciado. Conectado ao Redis e pronto para receber tarefas da "recovery-queue".');
 
-// O Worker escuta por tarefas na fila 'recovery-queue'
 const worker = new Worker('recovery-queue', async job => {
   const { transactionId, storeId, rawData, parsedData } = job.data;
-  console.log(`Processando job para a transação: ${transactionId}`);
+  console.log(`[WORKER] Processando job para a transação: ${transactionId}`);
 
-  // 1. Verifica se o pedido foi pago nesse meio tempo
   const isPaid = await redisConnection.get(`paid:${transactionId}`);
 
   if (isPaid) {
-    console.log(`Transação ${transactionId} foi paga. Job cancelado.`);
-    // Se foi pago, não fazemos nada.
-    return;
+    console.log(`[WORKER] Transação ${transactionId} foi PAGA. O lead NÃO será criado.`);
+    return { status: 'paid_and_skipped' };
   }
 
-  // 2. Se não foi pago, cria o lead para recuperação
-  console.log(`Transação ${transactionId} não foi paga. Criando lead...`);
+  console.log(`[WORKER] Transação ${transactionId} NÃO foi paga. Criando lead de recuperação...`);
   try {
     const queryText = 'INSERT INTO sales_leads (store_id, raw_data, parsed_data, status) VALUES ($1, $2, $3, $4)';
     const queryValues = [storeId, rawData, parsedData, 'new'];
     await pool.query(queryText, queryValues);
-    console.log(`Lead para a transação ${transactionId} criado com sucesso.`);
+    console.log(`[WORKER] Lead para a transação ${transactionId} criado com sucesso no banco de dados.`);
+    return { status: 'lead_created' };
   } catch (err) {
-    console.error(`Erro ao salvar lead para a transação ${transactionId}:`, err);
+    console.error(`[WORKER] ERRO ao salvar lead para a transação ${transactionId}:`, err);
+    throw err;
   }
 }, { connection: redisConnection });
 
+worker.on('completed', (job, result) => {
+  console.log(`[WORKER] Job ${job.id} (Transação: ${job.data.transactionId}) completado com status: ${result.status}`);
+});
+
 worker.on('failed', (job, err) => {
-  console.error(`Job ${job.id} falhou com o erro: ${err.message}`);
+  console.error(`[WORKER] Job ${job.id} (Transação: ${job.data.transactionId}) falhou com o erro: ${err.message}`);
 });
