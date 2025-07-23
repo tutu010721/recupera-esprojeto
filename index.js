@@ -29,7 +29,10 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-const redisConnection = new Redis(process.env.REDIS_URL);
+// CORREÇÃO APLICADA AQUI
+const redisConnection = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null
+});
 
 const recoveryQueue = new Queue('recovery-queue', { connection: redisConnection });
 
@@ -177,8 +180,9 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS PROTEGIDAS
+//                           ROTAS PROTEGIDAS e DE ADMIN
 // =================================================================
+// (Todas as suas rotas /api/... e /api/admin/... que já funcionavam)
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -291,10 +295,6 @@ app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   }
 });
 
-
-// =================================================================
-//                           ROTAS DE ADMIN
-// =================================================================
 app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
