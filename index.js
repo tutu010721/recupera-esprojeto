@@ -29,7 +29,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// CORREÇÃO APLICADA AQUI
 const redisConnection = new Redis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null
 });
@@ -180,9 +179,8 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS PROTEGIDAS e DE ADMIN
+//                           ROTAS PROTEGIDAS
 // =================================================================
-// (Todas as suas rotas /api/... e /api/admin/... que já funcionavam)
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -252,6 +250,7 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
   try {
     const agentId = req.user.userId;
     const { status, storeId } = req.query;
+
     let queryText = `
       SELECT sl.id, sl.store_id, sl.status, sl.received_at, sl.parsed_data, s.name as store_name 
       FROM sales_leads sl
@@ -260,6 +259,7 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
       WHERE asa.agent_id = $1
     `;
     const queryValues = [agentId];
+
     if (status && ['new', 'contacted', 'recovered', 'lost'].includes(status)) {
       queryValues.push(status);
       queryText += ` AND sl.status = $${queryValues.length}`;
@@ -269,6 +269,7 @@ app.get('/api/leads', authMiddleware, async (req, res) => {
       queryText += ` AND sl.store_id = $${queryValues.length}`;
     }
     queryText += ` ORDER BY sl.received_at DESC`;
+
     const result = await pool.query(queryText, queryValues);
     res.json(result.rows);
   } catch (err) {
@@ -295,6 +296,49 @@ app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   }
 });
 
+// --- NOVA ROTA DE MÉTRICAS PARA O ATENDENTE ---
+app.get('/api/agent/metrics', authMiddleware, async (req, res) => {
+    try {
+        const agentId = req.user.userId;
+
+        // Query SQL para calcular todas as métricas de uma só vez
+        const queryText = `
+            SELECT
+                -- Contagem de pedidos por status
+                COUNT(*) FILTER (WHERE sl.status = 'new') AS new_count,
+                COUNT(*) FILTER (WHERE sl.status = 'contacted') AS contacted_count,
+                COUNT(*) FILTER (WHERE sl.status = 'recovered') AS recovered_count,
+                -- Soma dos valores recuperados
+                COALESCE(SUM(CAST(sl.parsed_data->'total_value' AS NUMERIC)), 0) FILTER (WHERE sl.status = 'recovered') AS recovered_value,
+                -- Soma dos valores pendentes
+                COALESCE(SUM(CAST(sl.parsed_data->'total_value' AS NUMERIC)), 0) FILTER (WHERE sl.status IN ('new', 'contacted')) AS pending_value
+            FROM 
+                sales_leads sl
+            -- Garante que só estamos contando leads das lojas do atendente
+            WHERE sl.store_id IN (SELECT store_id FROM agent_store_assignments WHERE agent_id = $1);
+        `;
+        
+        const result = await pool.query(queryText, [agentId]);
+        const metrics = result.rows[0];
+
+        res.json({
+            awaitingContact: parseInt(metrics.new_count, 10) || 0,
+            inRecovery: parseInt(metrics.contacted_count, 10) || 0,
+            recoveredCount: parseInt(metrics.recovered_count, 10) || 0,
+            recoveredValue: parseFloat(metrics.recovered_value) || 0,
+            pendingValue: parseFloat(metrics.pending_value) || 0,
+        });
+
+    } catch (err) {
+        console.error("Erro em GET /api/agent/metrics:", err);
+        res.status(500).json({ error: 'Erro ao buscar as métricas.' });
+    }
+});
+
+
+// =================================================================
+//                           ROTAS DE ADMIN
+// =================================================================
 app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
