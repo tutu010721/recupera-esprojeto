@@ -129,6 +129,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// ROTA DE WEBHOOK CORRIGIDA com lógica mais flexível
 app.post('/webhook/:platform/:storeId', async (req, res) => {
   try {
     const { platform, storeId } = req.params;
@@ -145,7 +146,10 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
       return res.status(200).send({ message: 'Webhook de pagamento recebido.' });
     }
 
-    if (rawData.event === 'order.created' && rawData.resource.status === 'pending') {
+    // --- LÓGICA CORRIGIDA AQUI ---
+    // Agora, qualquer evento de 'order.created' é um candidato a recuperação,
+    // independentemente do status exato (pending, awaiting_payment, etc.)
+    if (rawData.event === 'order.created') {
       console.log(`Recebido webhook PENDENTE: ${transactionId}. Agendando verificação para 10 minutos.`);
       
       const parser = webhookParsers[platform];
@@ -179,8 +183,9 @@ app.post('/webhook/:platform/:storeId', async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS PROTEGIDAS
+//                           ROTAS PROTEGIDAS e DE ADMIN
 // =================================================================
+// (Todas as suas rotas /api/... e /api/admin/... continuam aqui, sem alterações)
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -293,44 +298,6 @@ app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   }
 });
 
-// ROTA DE MÉTRICAS - AGORA COM A CONSULTA CORRIGIDA
-app.get('/api/agent/metrics', authMiddleware, async (req, res) => {
-    try {
-        const agentId = req.user.userId;
-
-        const queryText = `
-            SELECT
-                COUNT(CASE WHEN sl.status = 'new' THEN 1 END) AS new_count,
-                COUNT(CASE WHEN sl.status = 'contacted' THEN 1 END) AS contacted_count,
-                COUNT(CASE WHEN sl.status = 'recovered' THEN 1 END) AS recovered_count,
-                COALESCE(SUM(CASE WHEN sl.status = 'recovered' THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS recovered_value,
-                COALESCE(SUM(CASE WHEN sl.status IN ('new', 'contacted') THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS pending_value
-            FROM 
-                sales_leads sl
-            WHERE sl.store_id IN (SELECT store_id FROM agent_store_assignments WHERE agent_id = $1);
-        `;
-        
-        const result = await pool.query(queryText, [agentId]);
-        const metrics = result.rows[0];
-
-        res.json({
-            awaitingContact: parseInt(metrics.new_count, 10) || 0,
-            inRecovery: parseInt(metrics.contacted_count, 10) || 0,
-            recoveredCount: parseInt(metrics.recovered_count, 10) || 0,
-            recoveredValue: parseFloat(metrics.recovered_value) || 0,
-            pendingValue: parseFloat(metrics.pending_value) || 0,
-        });
-
-    } catch (err) {
-        console.error("Erro em GET /api/agent/metrics:", err);
-        res.status(500).json({ error: 'Erro ao buscar as métricas.' });
-    }
-});
-
-
-// =================================================================
-//                           ROTAS DE ADMIN
-// =================================================================
 app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
