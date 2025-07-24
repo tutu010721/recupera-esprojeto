@@ -293,13 +293,42 @@ app.get('/api/agent/stores', authMiddleware, async (req, res) => {
   }
 });
 
-// --- NOVAS ROTAS PARA ANOTAÇÕES ---
+app.get('/api/agent/metrics', authMiddleware, async (req, res) => {
+    try {
+        const agentId = req.user.userId;
+        const queryText = `
+            SELECT
+                COUNT(CASE WHEN sl.status = 'new' THEN 1 END) AS new_count,
+                COUNT(CASE WHEN sl.status = 'contacted' THEN 1 END) AS contacted_count,
+                COUNT(CASE WHEN sl.status = 'recovered' THEN 1 END) AS recovered_count,
+                COALESCE(SUM(CASE WHEN sl.status = 'recovered' THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS recovered_value,
+                COALESCE(SUM(CASE WHEN sl.status IN ('new', 'contacted') THEN CAST(sl.parsed_data->>'total_value' AS NUMERIC) ELSE 0 END), 0) AS pending_value
+            FROM 
+                sales_leads sl
+            WHERE sl.store_id IN (SELECT store_id FROM agent_store_assignments WHERE agent_id = $1);
+        `;
+        
+        const result = await pool.query(queryText, [agentId]);
+        const metrics = result.rows[0];
 
-// Rota para BUSCAR as anotações de um lead específico
+        res.json({
+            awaitingContact: parseInt(metrics.new_count, 10) || 0,
+            inRecovery: parseInt(metrics.contacted_count, 10) || 0,
+            recoveredCount: parseInt(metrics.recovered_count, 10) || 0,
+            recoveredValue: parseFloat(metrics.recovered_value) || 0,
+            pendingValue: parseFloat(metrics.pending_value) || 0,
+        });
+
+    } catch (err) {
+        console.error("Erro em GET /api/agent/metrics:", err);
+        res.status(500).json({ error: 'Erro ao buscar as métricas.' });
+    }
+});
+
+// --- NOVAS ROTAS PARA ANOTAÇÕES ---
 app.get('/api/leads/:leadId/notes', authMiddleware, async (req, res) => {
   try {
     const { leadId } = req.params;
-    // Usamos um JOIN para pegar o nome do atendente que fez a anotação
     const queryText = `
       SELECT ln.*, u.name as agent_name 
       FROM lead_notes ln
@@ -315,7 +344,6 @@ app.get('/api/leads/:leadId/notes', authMiddleware, async (req, res) => {
   }
 });
 
-// Rota para ADICIONAR uma nova anotação a um lead
 app.post('/api/leads/:leadId/notes', authMiddleware, async (req, res) => {
   try {
     const { leadId } = req.params;
@@ -326,11 +354,16 @@ app.post('/api/leads/:leadId/notes', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'O conteúdo da anotação é obrigatório.' });
     }
     
+    const agentQuery = await pool.query('SELECT name FROM users WHERE id = $1', [agentId]);
+    const agentName = agentQuery.rows[0]?.name || 'Desconhecido';
+
     const queryText = 'INSERT INTO lead_notes (lead_id, agent_id, note) VALUES ($1, $2, $3) RETURNING *';
     const queryValues = [leadId, agentId, note];
 
     const result = await pool.query(queryText, queryValues);
-    res.status(201).json(result.rows[0]);
+    const newNote = { ...result.rows[0], agent_name: agentName };
+
+    res.status(201).json(newNote);
 
   } catch (err) {
     console.error("Erro em POST /api/leads/:leadId/notes:", err);
@@ -340,7 +373,22 @@ app.post('/api/leads/:leadId/notes', authMiddleware, async (req, res) => {
 
 
 // =================================================================
-//                           ROTAS DE ADMIN E INICIALIZAÇÃO
+//                           ROTAS DE ADMIN
 // =================================================================
-app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => { /* ...código existente... */ });
-app.listen(PORT, () => { console.log(`Servidor rodando na porta ${PORT}`); });
+app.get('/api/admin/users', authMiddleware, adminOnlyMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Erro em GET /api/admin/users:", err);
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
+  }
+});
+
+
+// =================================================================
+//                         INICIALIZAÇÃO DO SERVIDOR
+// =================================================================
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
